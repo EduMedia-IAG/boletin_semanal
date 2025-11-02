@@ -976,11 +976,66 @@ function formatWeekDisplay(weekNumber, year) {
     return `Semana ${weekNumber} (${dateRange})`;
 }
 
+// Extrae ID de YouTube soportando formatos youtube.com, youtu.be, shorts, embed
 function getYouTubeID(url) {
-    if(!url) return null;
-    const regExp = /^.*(http:\/\/googleusercontent.com\/youtube.com\/0\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    return (match && match[2].length === 11) ? match[2] : null;
+    if (!url) return null;
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+        // youtu.be/<id>
+        if (host === 'youtu.be') {
+            const id = u.pathname.split('/').filter(Boolean)[0];
+            return id && id.length === 11 ? id : null;
+        }
+        if (host.endsWith('youtube.com')) {
+            // youtube.com/watch?v=<id>
+            if (u.pathname === '/watch') {
+                const id = u.searchParams.get('v');
+                return id && id.length === 11 ? id : null;
+            }
+            // youtube.com/embed/<id>, /v/<id>, /shorts/<id>
+            const parts = u.pathname.split('/').filter(Boolean);
+            if (parts.length >= 2 && ['embed', 'v', 'shorts'].includes(parts[0])) {
+                const id = parts[1];
+                return id && id.length === 11 ? id : null;
+            }
+        }
+    } catch (_) {
+        // Ignorar errores de URL y continuar con un regex de respaldo
+    }
+    // Respaldo por regex (acepta patrones comunes)
+    const regExp = /(?:youtu\.be\/|youtube\.com\/(?:watch\?v=|embed\/|v\/|shorts\/))([A-Za-z0-9_-]{11})/;
+    const match = String(url).match(regExp);
+    return match ? match[1] : null;
+}
+
+// Obtiene el segundo de inicio (t/start) si está presente en la URL
+function getYouTubeStartSeconds(url) {
+    try {
+        const u = new URL(url);
+      
+        // ?start= / ?t=
+        let t = u.searchParams.get('start') || u.searchParams.get('t');
+        if (!t && u.hash) {
+            // #t=1m30s o #t=90s
+            const hash = u.hash.replace('#', '');
+            const m = hash.match(/t=([^&#]+)/);
+            if (m) t = m[1];
+        }
+        if (!t) return 0;
+        // Formatos: 90, 1m30s, 2h3m4s
+        if (/^\d+$/.test(t)) return parseInt(t, 10);
+        let seconds = 0;
+        const h = t.match(/(\d+)h/);
+        const m = t.match(/(\d+)m/);
+        const s = t.match(/(\d+)s/);
+        if (h) seconds += parseInt(h[1], 10) * 3600;
+        if (m) seconds += parseInt(m[1], 10) * 60;
+        if (s) seconds += parseInt(s[1], 10);
+        return seconds;
+    } catch (_) {
+        return 0;
+    }
 }
 
 function generateMediaEmbed(link, fullSize = false) {
@@ -988,10 +1043,17 @@ function generateMediaEmbed(link, fullSize = false) {
     
     const youtubeId = getYouTubeID(link);
     if (youtubeId) {
+        const start = getYouTubeStartSeconds(link);
+        const params = new URLSearchParams();
+        if (start > 0) params.set('start', String(start));
+        // Opcional: limpieza visual y privacidad mejorada
+        params.set('rel', '0');
+        // Construye URL de embed
+        const embedSrc = `https://www.youtube.com/embed/${youtubeId}${params.toString() ? `?${params.toString()}` : ''}`;
         if (fullSize) {
-            return `<div class="relative w-full max-w-4xl mx-auto mb-8"><div class="relative pb-[56.25%] h-0"><iframe class="absolute top-0 left-0 w-full h-full rounded-lg shadow-lg" src="http:\/\/googleusercontent.com\/youtube.com\/1{youtubeId}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe></div></div>`;
+            return `<div class="relative w-full max-w-4xl mx-auto mb-8"><div class="relative pb-[56.25%] h-0"><iframe class="absolute top-0 left-0 w-full h-full rounded-lg shadow-lg" src="${embedSrc}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe></div></div>`;
         } else {
-            return `<iframe width="100%" height="95" class="rounded-md" src="http:\/\/googleusercontent.com\/youtube.com\/1{youtubeId}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+            return `<iframe width="100%" height="180" class="rounded-md shadow" src="${embedSrc}" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen></iframe>`;
         }
     }
     
